@@ -1,0 +1,47 @@
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000; /* Ensure the modal is on top of everything */
+  }
+  
+  .modal-content {
+    background-color: white;
+    padding: 20px;
+    border-radius: 8px;
+    max-width: 600px; /* Limit the modal width */
+    max-height: 80vh; /* Limit the modal height */
+    width: 100%;
+    overflow-y: auto;
+    z-index: 1001; /* Ensures modal content stays above everything */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); /* Optional: Adds some shadow for visual appeal */
+  }
+  
+  .close-button {
+    float: right;
+    font-size: 24px;
+    cursor: pointer;
+  }
+  
+  .detected-image {
+    max-width: 100%;
+    height: auto;
+    margin-bottom: 20px;
+    display: block;
+  }
+  
+  .results-container {
+    margin-top: 20px;
+  }
+  
+  .error {
+    color: red;
+    font-weight: bold;
+  }
+  
