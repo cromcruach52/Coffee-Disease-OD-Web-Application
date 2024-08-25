@@ -53,14 +53,14 @@ def put_label_on_image(img, label, x, y, color, screen_width):
         lineType=cv2.LINE_AA
     )
 
-def detect_and_classify_coffee_disease(image, conf_threshold=0.25, iou_threshold=0.45, screen_width=1920, screen_height=1080):
+def detect_and_classify_coffee_disease(image, conf_threshold=0.25, iou_threshold=0.45, screen_width=1920, screen_height=1080, max_detections=10):
     img = np.array(image)
     detections = []
 
     # Stage 1: Detect the coffee leaf
     leaf_results = cleaf_model(img, conf=conf_threshold, iou=iou_threshold, verbose=False)[0]
     
-    for box in leaf_results.boxes:
+    for box in leaf_results.boxes[:max_detections]:  # Limit to max_detections
         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
         confidence = box.conf[0].cpu().numpy()
         class_id = int(box.cls[0].cpu().numpy())
@@ -75,7 +75,7 @@ def detect_and_classify_coffee_disease(image, conf_threshold=0.25, iou_threshold
         leaf_roi = img[y1:y2, x1:x2]
         disease_results = cdisease_model(leaf_roi, conf=conf_threshold, iou=iou_threshold, verbose=False)[0]
         
-        for dbox in disease_results.boxes:
+        for dbox in disease_results.boxes[:1]:  # Only take the most confident disease detection
             dx1, dy1, dx2, dy2 = dbox.xyxy[0].cpu().numpy().astype(int)
             dconfidence = dbox.conf[0].cpu().numpy()
             dclass_id = int(dbox.cls[0].cpu().numpy())
@@ -96,6 +96,9 @@ def detect_and_classify_coffee_disease(image, conf_threshold=0.25, iou_threshold
                 'disease_confidence': float(dconfidence),
                 'bbox': [float(dx1), float(dy1), float(dx2), float(dy2)]
             })
+
+        if len(detections) >= max_detections:
+            break
 
     # Resize the image to fit the screen if needed
     img_height, img_width = img.shape[:2]
