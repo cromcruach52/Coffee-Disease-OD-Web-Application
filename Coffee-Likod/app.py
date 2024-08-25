@@ -1,99 +1,109 @@
-# app.py
-
 import os
-import uuid
-from PIL import Image, ImageDraw, ImageFont
+import io
+import base64
+from PIL import Image
+import cv2
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from ultralytics import YOLO
-import base64
-import io
 
 app = Flask(__name__)
 CORS(app)
-
-# Ensure the 'static' directory exists
-if not os.path.exists('static'):
-    os.makedirs('static')
 
 # Load YOLOv8 models
 cleaf_model = YOLO('cleaf.pt')
 cdisease_model = YOLO('cdisease.pt')
 
-cleaf_classes = cleaf_model.names
-cdisease_classes = cdisease_model.names
-
 cleaf_colors = {
     0: (0, 255, 0),    # Green for 'arabica'
     1: (0, 255, 255),  # Yellow for 'liberica'
-    2: (255, 0, 0)     # Red for 'robusta'
+    2: (255, 0, 0)     # Blue for 'robusta'
 }
 cdisease_colors = {
     0: (255, 165, 0),  # Orange for 'brown_eye_spot'
     1: (255, 0, 255),  # Magenta for 'leaf_miner'
-    2: (0, 0, 255),    # Blue for 'leaf_rust'
+    2: (0, 0, 255),    # Red for 'leaf_rust'
     3: (128, 0, 128)   # Purple for 'red_spider_mite'
 }
 
-def detect_and_classify_coffee_disease(image, conf_threshold=0.15, iou_threshold=0.45):
-    # Convert PIL Image to numpy array
-    img_array = np.array(image)
+def put_label_on_image(img, label, x, y, color, screen_width):
+    font_scale = 0.5
+    font_thickness = 1
+    (label_width, label_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
 
-    # Detect leaves
-    leaf_results = cleaf_model(img_array)[0]
+    if x + label_width > screen_width:
+        x = screen_width - label_width - 10
 
-    # Create a drawing context
-    draw = ImageDraw.Draw(image)
-    # Load a truetype font
-    font_size = 20  # Adjust this size as needed
-    font = ImageFont.truetype("arial.ttf", font_size)
+    cv2.rectangle(
+        img,
+        (x, y - label_height - baseline),
+        (x + label_width, y),
+        color=color,
+        thickness=cv2.FILLED
+    )
+    cv2.putText(
+        img,
+        label,
+        (x, y - baseline),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        (0, 0, 0),
+        thickness=font_thickness,
+        lineType=cv2.LINE_AA
+    )
 
+def detect_and_classify_coffee_disease(image, conf_threshold=0.25, iou_threshold=0.45, screen_width=1920, screen_height=1080):
+    img = np.array(image)
     detections = []
 
-    for leaf in leaf_results.boxes.data:
-        x1, y1, x2, y2, leaf_conf, leaf_class = leaf
-        if leaf_conf > conf_threshold:
-            leaf_class = int(leaf_class)
-            leaf_name = cleaf_classes[leaf_class]
+    # Stage 1: Detect the coffee leaf
+    leaf_results = cleaf_model(img, conf=conf_threshold, iou=iou_threshold, verbose=False)[0]
+    
+    for box in leaf_results.boxes:
+        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+        confidence = box.conf[0].cpu().numpy()
+        class_id = int(box.cls[0].cpu().numpy())
+        class_name = cleaf_model.names[class_id]
+        color = cleaf_colors.get(class_id, (255, 255, 255))
 
-            # Convert Tensor coordinates to integers
-            x1, y1, x2, y2 = map(int, [x1.item(), y1.item(), x2.item(), y2.item()])
+        cv2.rectangle(img, (x1, y1), (x2, y2), color=color, thickness=2)
+        label = f"{class_name} {confidence:.2f}"
+        put_label_on_image(img, label, x1, y1, color, screen_width)
 
-            # Draw leaf bounding box
-            draw.rectangle([x1, y1, x2, y2], outline=cleaf_colors[leaf_class], width=2)
-            draw.text((x1, y1 - font_size - 5), f"{leaf_name} {leaf_conf:.2f}", fill=cleaf_colors[leaf_class], font=font)
+        # Stage 2: Detect the disease within the leaf region
+        leaf_roi = img[y1:y2, x1:x2]
+        disease_results = cdisease_model(leaf_roi, conf=conf_threshold, iou=iou_threshold, verbose=False)[0]
+        
+        for dbox in disease_results.boxes:
+            dx1, dy1, dx2, dy2 = dbox.xyxy[0].cpu().numpy().astype(int)
+            dconfidence = dbox.conf[0].cpu().numpy()
+            dclass_id = int(dbox.cls[0].cpu().numpy())
+            dclass_name = cdisease_model.names[dclass_id]
+            dcolor = cdisease_colors.get(dclass_id, (255, 255, 255))
 
-            # Crop the leaf region
-            leaf_img = image.crop((x1, y1, x2, y2))
-            leaf_array = np.array(leaf_img)
+            # Adjust disease box coordinates to match the original image
+            dx1, dy1, dx2, dy2 = dx1+x1, dy1+y1, dx2+x1, dy2+y1
 
-            # Detect diseases
-            disease_results = cdisease_model(leaf_array)[0]
+            cv2.rectangle(img, (dx1, dy1), (dx2, dy2), color=dcolor, thickness=2)
+            dlabel = f"{dclass_name} {dconfidence:.2f}"
+            put_label_on_image(img, dlabel, dx1, dy1, dcolor, screen_width)
 
-            for disease in disease_results.boxes.data:
-                dx1, dy1, dx2, dy2, disease_conf, disease_class = disease
-                if disease_conf > conf_threshold:
-                    disease_class = int(disease_class)
-                    disease_name = cdisease_classes[disease_class]
+            detections.append({
+                'leaf_class': class_name,
+                'leaf_confidence': float(confidence),
+                'disease_class': dclass_name,
+                'disease_confidence': float(dconfidence),
+                'bbox': [float(dx1), float(dy1), float(dx2), float(dy2)]
+            })
 
-                    # Convert Tensor coordinates to integers and adjust them to the original image
-                    dx1, dy1, dx2, dy2 = map(int, [dx1.item() + x1, dy1.item() + y1, dx2.item() + x1, dy2.item() + y1])
+    # Resize the image to fit the screen if needed
+    img_height, img_width = img.shape[:2]
+    scaling_factor = min(screen_width / img_width, screen_height / img_height)
+    if scaling_factor < 1.0:
+        img = cv2.resize(img, (int(img_width * scaling_factor), int(img_height * scaling_factor)))
 
-                    # Draw disease bounding box
-                    draw.rectangle([dx1, dy1, dx2, dy2], outline=cdisease_colors[disease_class], width=2)
-                    draw.text((dx1, dy1 - font_size - 5), f"{disease_name} {disease_conf:.2f}", fill=cdisease_colors[disease_class], font=font)
-
-                    detections.append({
-                        'leaf_class': leaf_name,
-                        'leaf_confidence': float(leaf_conf),
-                        'disease_class': disease_name,
-                        'disease_confidence': float(disease_conf),
-                        'bbox': [float(dx1), float(dy1), float(dx2), float(dy2)]
-                    })
-
-    return image, detections
-
+    return img, detections
 
 @app.route('/detect', methods=['POST'])
 def detect_disease():
@@ -113,15 +123,13 @@ def detect_disease():
         processed_image, detections = detect_and_classify_coffee_disease(image)
         
         # Convert the processed image to base64
-        img_io = io.BytesIO()
-        processed_image.save(img_io, 'JPEG', quality=70)
-        img_io.seek(0)
-        img_base64 = base64.b64encode(img_io.getvalue()).decode('utf-8')
-        Ang 
+        _, img_encoded = cv2.imencode('.jpg', processed_image)
+        img_base64 = base64.b64encode(img_encoded).decode('utf-8')
+    
         # Return the results as JSON
         return jsonify({
             'detections': detections,
-            'image': img_base64  # This is the base64 encoded image
+            'image': img_base64
         })
 
 if __name__ == '__main__':

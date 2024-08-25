@@ -53,7 +53,7 @@ export default function Home() {
                     </div>
                     <div className="w-96 mb-2">
                       <span className="font-bold">5. Review and Submit: </span>
-                      After uploading, review the image preview to ensure clarity and focus. Click "Submit" to analyze.
+                      After uploading, review the image preview to ensure clarity and focus. Click Submit to analyze.
                     </div>
                   </CardDescription>
                   <CardTitle className="text-center mb-4">Important Notes</CardTitle>
